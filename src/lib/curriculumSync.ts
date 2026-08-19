@@ -20,6 +20,28 @@ const DEFAULT_STATE: CurriculumState = {
 };
 
 /**
+ * Fetch the latest document from Firestore once.
+ */
+export async function getCurriculumFromCloud(): Promise<CurriculumState | null> {
+  try {
+    const snap = await getDoc(CURRICULUM_DOC_REF);
+    if (snap.exists()) {
+      const data = snap.data() as any;
+      return {
+        version: data.version || 1,
+        lastUpdated: data.lastUpdated || new Date().toISOString(),
+        lock: data.lock || { isLocked: false, hasPin: true },
+        plan: Array.isArray(data.plan) && data.plan.length > 0 ? data.plan : INITIAL_PLAN,
+        reportDates: Array.isArray(data.reportDates) ? data.reportDates : DEFAULT_YEAR_REPORT_DATES
+      };
+    }
+  } catch (err) {
+    console.error('Failed to get curriculum from cloud:', err);
+  }
+  return null;
+}
+
+/**
  * Subscribe in real time to the curriculum document in Firestore.
  * When changes are saved on desktop, mobile immediately receives the update through this listener.
  */
@@ -28,7 +50,15 @@ export function subscribeToCurriculum(
   onError: (err: any) => void
 ) {
   try {
-    return onSnapshot(
+    // 1. First trigger an eager fetch to show changes instantly upon opening
+    getCurriculumFromCloud().then((cloudData) => {
+      if (cloudData) {
+        onUpdate(cloudData);
+      }
+    });
+
+    // 2. Real-time snapshot listener
+    const unsubscribe = onSnapshot(
       CURRICULUM_DOC_REF,
       (snapshot) => {
         if (snapshot.exists()) {
@@ -40,25 +70,28 @@ export function subscribeToCurriculum(
             plan: Array.isArray(data.plan) && data.plan.length > 0 ? data.plan : INITIAL_PLAN,
             reportDates: Array.isArray(data.reportDates) ? data.reportDates : DEFAULT_YEAR_REPORT_DATES
           };
-          // Also sync to local storage cache
+          
           try {
             localStorage.setItem('curriculum_plan_v2', JSON.stringify(cleanState.plan));
             localStorage.setItem('curriculum_report_dates_v2', JSON.stringify(cleanState.reportDates));
             localStorage.setItem('curriculum_lock_state', JSON.stringify(cleanState.lock));
+            localStorage.setItem('curriculum_last_updated', cleanState.lastUpdated);
           } catch {}
+
           onUpdate(cleanState);
         } else {
-          // Document does not exist yet; initialize with default plan
+          // If no document in cloud yet, seed with current initial state
           saveCurriculumToCloud(INITIAL_PLAN, DEFAULT_YEAR_REPORT_DATES, { isLocked: false, hasPin: true })
             .then(() => onUpdate(DEFAULT_STATE))
             .catch((err) => console.warn('Could not auto-seed cloud curriculum:', err));
         }
       },
       (error) => {
-        console.error('Firestore curriculum subscription error:', error);
+        console.error('Firestore real-time subscription error:', error);
         onError(error);
       }
     );
+    return unsubscribe;
   } catch (err) {
     console.error('Error setting up Firestore listener:', err);
     onError(err);
