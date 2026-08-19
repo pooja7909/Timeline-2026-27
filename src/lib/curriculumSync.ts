@@ -40,6 +40,12 @@ export function subscribeToCurriculum(
             plan: Array.isArray(data.plan) && data.plan.length > 0 ? data.plan : INITIAL_PLAN,
             reportDates: Array.isArray(data.reportDates) ? data.reportDates : DEFAULT_YEAR_REPORT_DATES
           };
+          // Also sync to local storage cache
+          try {
+            localStorage.setItem('curriculum_plan_v2', JSON.stringify(cleanState.plan));
+            localStorage.setItem('curriculum_report_dates_v2', JSON.stringify(cleanState.reportDates));
+            localStorage.setItem('curriculum_lock_state', JSON.stringify(cleanState.lock));
+          } catch {}
           onUpdate(cleanState);
         } else {
           // Document does not exist yet; initialize with default plan
